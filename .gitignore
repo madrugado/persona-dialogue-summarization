@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Training outputs and results
+output/
+*.csv
+*.log
+runs/
+checkpoint-*/
+.DS_Store
+*.ipynb_checkpoints
+__pycache__/
+.python-version
+data/.DS_Store
+.vscode/
+*.ipynb_checkpoints
+__pycache__/
+.python-version
+data/.DS_Store
