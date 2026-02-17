@@ -40,12 +40,11 @@ def load_dialogues(data_dir: str, split: str = "test", samples: int = -1) -> Lis
     return data
 
 
-def build_dialogue_text(dialogue: List[Dict], target_speaker: int) -> str:
-    """Build dialogue text from messages, filtering by target speaker.
+def build_dialogue_text(dialogue: List[Dict]) -> str:
+    """Build dialogue text from messages.
 
     Args:
         dialogue: List of message dicts with 'speaker' and 'text'
-        target_speaker: Which speaker's perspective to use (1 or 2)
 
     Returns:
         Formatted dialogue text
@@ -90,7 +89,6 @@ def query_giga_and_save(
     dialogues: List[Dict],
     api_key: str,
     output_file: str,
-    target_speaker: int = 1,
     model: str = "GigaChat-Max"
 ) -> None:
     """Query GigaChat API for all dialogues and save responses."""
@@ -98,18 +96,18 @@ def query_giga_and_save(
 
     for i, item in enumerate(dialogues):
         item_id = item.get('id', i)
-        dialogue_text = build_dialogue_text(item.get('dialogue', []), target_speaker)
+        dialogue_text = build_dialogue_text(item.get('dialogue', []))
 
         if not dialogue_text:
             responses.append({"id": item_id, "response": ""})
             continue
 
         # Create prompt for GigaChat
-        prompt = f"""На основе следующего диалога опиши личность Пользователя {target_speaker}.
+        prompt = f"""На основе следующего диалога опиши личность Пользователя 2.
 
 {dialogue_text}
 
-Опиши личность Пользователя {target_speaker} в виде списка фактов о нём:"""
+Опиши личность Пользователя 2 в виде списка фактов о нём:"""
 
         try:
             print(f"Querying GigaChat API for item {i+1}/{len(dialogues)}...")
@@ -128,7 +126,7 @@ def query_giga_and_save(
     return responses
 
 
-def evaluate_giga_responses(dialogues: List[Dict], giga_file: str, target_speaker: int = 1) -> List[Dict]:
+def evaluate_giga_responses(dialogues: List[Dict], giga_file: str) -> List[Dict]:
     """Load saved GigaChat API responses and prepare for evaluation."""
     with open(giga_file, "r", encoding="utf-8") as f:
         giga_responses = json.load(f)
@@ -144,11 +142,8 @@ def evaluate_giga_responses(dialogues: List[Dict], giga_file: str, target_speake
     for item in dialogues:
         item_id = item.get('id', '')
 
-        # Get the target persona based on target_speaker
-        if target_speaker == 1:
-            reference_persona = item.get('persona_1', '')
-        else:
-            reference_persona = item.get('persona_2', '')
+        # Always use persona_2 as target
+        reference_persona = item.get('persona_2', '')
 
         if not reference_persona:
             continue
@@ -262,9 +257,9 @@ def main():
     parser.add_argument(
         "--target-speaker",
         type=int,
-        default=1,
+        default=2,
         choices=[1, 2],
-        help="Target speaker to generate persona for (1 or 2, default: 1)",
+        help="Target speaker to generate persona for (1 or 2, default: 2)",
     )
 
     args = parser.parse_args()
@@ -282,14 +277,14 @@ def main():
             return
     else:
         # Query GigaChat API and save responses
-        responses = query_giga_and_save(dialogues, args.api_key, giga_file, args.target_speaker, args.model)
+        responses = query_giga_and_save(dialogues, args.api_key, giga_file, args.model)
 
         if len(responses) == 0:
             print("No responses to evaluate!")
             return
 
     # Evaluate saved responses
-    predictions, references = evaluate_giga_responses(dialogues, giga_file, args.target_speaker)
+    predictions, references = evaluate_giga_responses(dialogues, giga_file)
 
     if len(predictions) == 0:
         print("No predictions to evaluate!")
@@ -304,7 +299,7 @@ def main():
     print("\n" + "=" * 80)
     print("EVALUATION RESULTS")
     print("=" * 80)
-    print(f"Target Speaker: {args.target_speaker}")
+    print(f"Target Speaker: 2")
     for key, value in metrics.items():
         print(f"{key}: {value:.4f}")
     print("=" * 80)
@@ -312,7 +307,7 @@ def main():
     # Save results - convert numpy types to Python types
     results = {
         'model': f'GigaChat-{args.model}',
-        'target_speaker': args.target_speaker,
+        'target_speaker': 2,
         'split': args.split,
         'total_samples': len(references),
         **{k: float(v) for k, v in metrics.items()},
@@ -328,10 +323,10 @@ def main():
     print("\nSample predictions (first 5):")
     print("-" * 80)
     for i, item in enumerate(dialogues[:5]):
-        reference = item.get(f'persona_{args.target_speaker}', '')
+        reference = item.get('persona_2', '')
         predicted = predictions[i] if i < len(predictions) else "N/A"
         print(f"\n--- Sample {i+1} ---")
-        print(f"Reference Persona {args.target_speaker}: {reference}")
+        print(f"Reference Persona 2: {reference}")
         print(f"Predicted: {predicted}")
 
 
