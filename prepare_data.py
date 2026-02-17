@@ -10,6 +10,7 @@ import os
 import re
 import random
 from pathlib import Path
+from typing import List, Dict, Set, Tuple
 
 
 def remove_html_tags(text: str) -> str:
@@ -124,11 +125,76 @@ def clean_message_text(text: str) -> str:
     return text
 
 
-def split_data(data: List[Dict], train_ratio: float = 0.8, val_ratio: float = 0.1, seed: int = 42) -> tuple:
-    """Split data into train, val, and test sets.
+def build_persona_index(data: List[Dict]) -> Dict[str, Set[int]]:
+    """Build an index mapping personas to dialogue IDs containing them.
 
     Args:
-        data: List of data points
+        data: List of dialogue dicts with 'id', 'persona_1', 'persona_2'
+
+    Returns:
+        Dictionary mapping persona text to set of dialogue IDs
+    """
+    persona_index: Dict[str, Set[int]] = {}
+    for item in data:
+        dialog_id = item['id']
+        persona = item.get('persona_2', '')
+        if persona:
+                if persona not in persona_index:
+                    persona_index[persona] = set()
+                persona_index[persona].add(dialog_id)
+    return persona_index
+
+
+def _build_connected_component(
+    persona_index: Dict[str, Set[int]],
+    data_by_id: Dict[int, Dict],
+    start_id: int,
+) -> Tuple[Set[int], Set[str]]:
+    """Find all dialogues and personas in the connected component starting from a dialogue.
+
+    Connected components are built using persona_2 only to avoid all dialogues being linked.
+
+    Args:
+        persona_index: Mapping from persona_2 to dialogue IDs
+        data_by_id: Mapping from dialogue ID to dialogue data
+        start_id: Starting dialogue ID
+
+    Returns:
+        Tuple of (dialogue IDs in component, personas in component)
+    """
+    dialogue_ids = set([start_id])
+    personas = set()
+    queue = [start_id]
+
+    while queue:
+        dialog_id = queue.pop(0)
+        dialog_data = data_by_id[dialog_id]
+
+        # Add persona_2 from this dialogue
+        persona = dialog_data.get('persona_2', '')
+        if persona and persona not in personas:
+            personas.add(persona)
+            # Find all dialogues with this persona_2
+            for related_id in persona_index.get(persona, set()):
+                if related_id not in dialogue_ids:
+                    dialogue_ids.add(related_id)
+                    queue.append(related_id)
+
+    return dialogue_ids, personas
+
+
+def split_data(
+    data: List[Dict],
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    seed: int = 42,
+) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """Split data into train, val, and test sets with no duplicate personas.
+
+    Uses connected components to ensure each persona appears in at most one split.
+
+    Args:
+        data: List of dialogue dicts
         train_ratio: Ratio for training set
         val_ratio: Ratio for validation set
         seed: Random seed for reproducibility
@@ -137,16 +203,69 @@ def split_data(data: List[Dict], train_ratio: float = 0.8, val_ratio: float = 0.
         Tuple of (train, val, test) lists
     """
     random.seed(seed)
-    shuffled = data.copy()
-    random.shuffle(shuffled)
 
-    total = len(shuffled)
-    train_end = int(total * train_ratio)
-    val_end = train_end + int(total * val_ratio)
+    # Build persona index and data lookup
+    persona_index = build_persona_index(data)
+    data_by_id = {d['id']: d for d in data}
 
-    train = shuffled[:train_end]
-    val = shuffled[train_end:val_end]
-    test = shuffled[val_end:]
+    # Calculate target sizes
+    total = len(data)
+    train_target = int(total * train_ratio)
+    val_target = int(total * val_ratio)
+
+    # Build splits using connected components
+    remaining_ids: Set[int] = set(d['id'] for d in data)
+    val_ids: List[int] = []
+    test_ids: List[int] = []
+
+    def add_to_split(target_ids: List[int], target_size: int) -> bool:
+        """Try to add a connected component to a split.
+
+        Returns True if component fits, False otherwise.
+        """
+        # Try to find a small component that fits
+        shuffled_remaining = list(remaining_ids)
+        random.shuffle(shuffled_remaining)
+
+        sample_size = min(100, len(shuffled_remaining))
+        sample_ids = shuffled_remaining[:sample_size]
+
+        for dialog_id in sample_ids:
+            if dialog_id not in remaining_ids:
+                continue
+            component_dialogues, _ = _build_connected_component(
+                persona_index, data_by_id, dialog_id
+            )
+            if len(target_ids) + len(component_dialogues) <= target_size:
+                target_ids.extend(component_dialogues)
+                for d_id in component_dialogues:
+                    remaining_ids.discard(d_id)
+                return True
+        return False
+
+    # Build val split first
+    while len(val_ids) < val_target and remaining_ids:
+        if not add_to_split(val_ids, val_target):
+            # Add one random dialogue if no component fits
+            random_id = random.choice(list(remaining_ids))
+            val_ids.append(random_id)
+            remaining_ids.remove(random_id)
+
+    # Build test split second
+    test_target = total - train_target - val_target
+    while len(test_ids) < test_target and remaining_ids:
+        if not add_to_split(test_ids, test_target):
+            # Add one random dialogue if no component fits
+            random_id = random.choice(list(remaining_ids))
+            test_ids.append(random_id)
+            remaining_ids.remove(random_id)
+
+    # Remaining go to train
+    train_ids = list(remaining_ids)
+
+    train = [data_by_id[pid] for pid in train_ids]
+    val = [data_by_id[pid] for pid in val_ids]
+    test = [data_by_id[pid] for pid in test_ids]
 
     return train, val, test
 
@@ -243,3 +362,6 @@ def main():
     print(f"Train: {len(train)} ({len(train)/len(dialogues)*100:.1f}%)")
     print(f"Val: {len(val)} ({len(val)/len(dialogues)*100:.1f}%)")
     print(f"Test: {len(test)} ({len(test)/len(dialogues)*100:.1f}%)")
+
+main()
+

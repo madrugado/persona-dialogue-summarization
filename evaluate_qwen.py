@@ -167,9 +167,9 @@ def generate_persona(
 Диалог:
 {dialogue_text}
 
-Опиши личность Пользователя {target_speaker}:"""
+Опиши личность Пользователя 2:"""
 
-    prompt = examples.format(dialogue_text=dialogue_text, target_speaker=target_speaker)
+    prompt = examples.format(dialogue_text=dialogue_text)
 
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
@@ -198,7 +198,7 @@ def generate_persona(
                 pad_token_id=tokenizer.pad_token_id,
             )
             full_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            predicted_persona = full_output.split(f"Опиши личность Пользователя {target_speaker}:")[-1].strip()
+            predicted_persona = full_output.split("Опиши личность Пользователя 2:")[-1].strip()
 
     # Clean up: stop at newlines that suggest the model is continuing
     predicted_persona = predicted_persona.split("\n\n")[0].strip()
@@ -255,7 +255,7 @@ def build_dialogue_text(dialogue: List[Dict]) -> str:
     return "\n".join(messages)
 
 
-def generate_personas_batched(model, tokenizer, dialogues: List[Dict], target_speaker: int,
+def generate_personas_batched(model, tokenizer, dialogues: List[Dict],
                                    is_seq2seq: bool,
                                    max_new_tokens: int = MAX_NEW_TOKENS, temperature: float = TEMPERATURE, batch_size: int = 1):
     """Generate persona descriptions from dialogues in batches."""
@@ -293,7 +293,7 @@ def generate_personas_batched(model, tokenizer, dialogues: List[Dict], target_sp
 
     if is_seq2seq:
         # Seq2Seq: dialogue -> persona
-        prompts = [f"{examples}Диалог:\n{dialogue_text}\n\nОпиши личность Пользователя {target_speaker}:" for dialogue_text in build_dialogue_text_batch(dialogues)]
+        prompts = [f"{examples}Диалог:\n{dialogue_text}\n\nОпиши личность Пользователя 2:" for dialogue_text in build_dialogue_text_batch(dialogues)]
         inputs = tokenizer(prompts, padding=True, truncation=True, max_length=1024, return_tensors="pt").to(model.device)
         outputs = model.generate(
             **inputs,
@@ -305,7 +305,7 @@ def generate_personas_batched(model, tokenizer, dialogues: List[Dict], target_sp
         results = tokenizer.batch_decode(outputs, skip_special_tokens=True)
     else:
         # Causal LM
-        prompts = [f"{examples}Диалог:\n{dialogue_text}\n\nОпиши личность Пользователя {target_speaker}:" for dialogue_text in build_dialogue_text_batch(dialogues)]
+        prompts = [f"{examples}Диалог:\n{dialogue_text}\n\nОпиши личность Пользователя 2:" for dialogue_text in build_dialogue_text_batch(dialogues)]
         inputs = tokenizer(prompts, padding=True, truncation=True, max_length=1024, return_tensors="pt").to(model.device)
         outputs = model.generate(
             **inputs,
@@ -318,8 +318,8 @@ def generate_personas_batched(model, tokenizer, dialogues: List[Dict], target_sp
         # Extract continuation after the prompt
         results = []
         for output in full_outputs:
-            if f"Опиши личность Пользователя {target_speaker}:" in output:
-                result = output.split(f"Опиши личность Пользователя {target_speaker}:")[-1].strip()
+            if "Опиши личность Пользователя 2:" in output:
+                result = output.split("Опиши личность Пользователя 2:")[-1].strip()
             else:
                 result = output
             # Clean up
@@ -412,11 +412,11 @@ def evaluate_model(
     max_new_tokens: int = MAX_NEW_TOKENS,
     temperature: float = TEMPERATURE,
     do_sample: bool = DO_SAMPLE,
-    target_speaker: int = 1,
     split: str = "test",
 ):
     """
     Evaluate model on dialogue persona generation.
+    Always uses persona_2 as target (matching prepare_data.py split logic).
 
     Args:
         model_path: Path to the model (can be local or HuggingFace hub)
@@ -426,7 +426,6 @@ def evaluate_model(
         max_new_tokens: Maximum new tokens to generate
         temperature: Sampling temperature
         do_sample: Whether to use sampling (vs greedy decoding)
-        target_speaker: Which speaker to generate persona for (1 or 2)
         split: Dataset split to use (train, val, or test)
     """
     print("=" * 80)
@@ -448,7 +447,7 @@ def evaluate_model(
     else:
         print(f"Evaluating on all {len(dialogues)} samples")
 
-    print(f"Target speaker: {target_speaker}")
+    print("Target speaker: 2")
 
     # Generate predictions with batching
     print("\nGenerating predictions...")
@@ -471,15 +470,13 @@ def evaluate_model(
 
         # Generate in batch
         batch_preds = generate_personas_batched(
-            model, tokenizer, batch_dialogues, target_speaker, is_seq2seq, max_new_tokens, temperature, batch_size
+            model, tokenizer, batch_dialogues, is_seq2seq, max_new_tokens, temperature, batch_size
         )
 
         # Store results
+        # Note: We only use persona_2 as target (matching prepare_data.py split logic)
         for item, pred in zip(batch_data, batch_preds):
-            if target_speaker == 1:
-                reference_persona = item.get("persona_1", "")
-            else:
-                reference_persona = item.get("persona_2", "")
+            reference_persona = item.get("persona_2", "")
 
             if reference_persona:
                 predictions.append({
@@ -542,7 +539,7 @@ def evaluate_model(
     print("-" * 80)
     for i, pred in enumerate(predictions[:10]):
         print(f"\n--- Sample {i+1} ---")
-        print(f"Reference Persona {pred['target_speaker']}: {pred['reference']}")
+        print(f"Reference Persona 2: {pred['reference']}")
         print(f"Prediction: {pred['prediction']}")
 
     # Save predictions if output file specified
@@ -559,7 +556,6 @@ def evaluate_model(
     # Flatten all metrics into a single dict
     all_metrics = {
         "model_name": model_name,
-        "target_speaker": target_speaker,
         "split": split,
         "data_count": data_count,
         **bleu_scores,
@@ -651,7 +647,6 @@ def main():
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         do_sample=not args.no_sample,
-        target_speaker=args.target_speaker,
         split=args.split,
     )
 
